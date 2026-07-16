@@ -1,4 +1,4 @@
-# OpenCode Session Usage
+# OpenCode Session Token Summary
 
 An OpenCode TUI plugin that adds a compact session-usage panel to the sidebar.
 It aggregates the root session and all nested subagent sessions.
@@ -19,23 +19,28 @@ It aggregates the root session and all nested subagent sessions.
 
 ## Install
 
-Install globally:
+Install this plugin through OpenCode's plugin installation flow:
+
+1. Press `Ctrl+P` in OpenCode and choose **Install plugin**.
+2. Press `Tab` to install globally.
+3. Enter `opencode-tokens-summary` without a version or `@latest` suffix.
+
+The installation creates an entry referencing this package in
+`~/.config/opencode/tui.json`.
+
+This plugin is functional only in version `0.3.0` and later.
+
+### Updating
+
+OpenCode does not currently support plugin updates reliably. See OpenCode PRs
+[#35777](https://github.com/anomalyco/opencode/pull/35777),
+[#32822](https://github.com/anomalyco/opencode/pull/32822), and
+[#37300](https://github.com/anomalyco/opencode/pull/37300). To force OpenCode
+to download current plugin versions, clear its plugin cache:
 
 ```sh
-opencode plugin oc-plugin-session-usage --global
+rm -rf ~/.cache/opencode
 ```
-
-Or install locally for the current project:
-
-```sh
-opencode plugin oc-plugin-session-usage
-```
-
-You can also open the OpenCode plugin manager, select **Install plugin**, and
-enter `oc-plugin-session-usage`.
-
-Restart OpenCode after installation if the plugin is not loaded into the
-current TUI session.
 
 ## Notes
 
