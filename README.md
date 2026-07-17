@@ -7,11 +7,17 @@ It aggregates the root session and all nested subagent sessions.
 
 ## Features
 
-- Input, output, reasoning, cache read, and cache write tokens
-- Assistant turn count across the root session and all descendants
-- Aggregate API cost when OpenCode reports a nonzero cost
-- Nested subagent discovery with bounded concurrent requests
-- Race-safe refreshes that retain the last complete snapshot on API failure
+- Compact OpenCode sidebar panel with live session updates
+- Input, output, reasoning, cache read, cache write, and total token counts
+- Cache hit ratio and assistant turn count
+- Usage aggregated across the root session and every nested subagent
+- Reported API costs for metered providers
+- API-equivalent cost estimates for quota and subscription-backed providers
+- One combined cost total for sessions that mix metered and quota-backed models
+- Clear labels distinguishing reported, estimated, and partially estimated costs
+- Models.dev-backed pricing with model alias matching and context-tier support
+- Bounded concurrent requests for nested subagent discovery
+- Race-safe refreshes that retain the last complete snapshot after API failures
 
 ## Requirements
 
@@ -50,9 +56,13 @@ descendant messages to count their assistant turns. Requests are limited to four
 concurrent operations. A failed refresh leaves the last complete sidebar values
 in place rather than showing partial totals.
 
-Cost is OpenCode's reported estimated API cost. Providers authenticated through
-an included subscription, such as ChatGPT Pro/Plus OAuth, can report zero cost;
-the cost row is intentionally hidden in that case.
+Nonzero cost reported by OpenCode is shown as `$ cost`. For messages with an
+explicit zero cost, the plugin uses OpenCode's Models.dev-backed provider
+catalog to calculate what the same tokens would cost at published API rates.
+Fully estimated totals are shown as `$ est. cost`; totals that combine reported
+and estimated amounts are shown as `$ cost incl. est.` Quota or subscription
+users are not necessarily charged the estimated amount. If catalog pricing
+cannot be matched, only the reported cost is shown.
 
 ## Development
 

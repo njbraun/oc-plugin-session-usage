@@ -6,7 +6,9 @@
 // because reading the reactive `api.state.session` store did not repaint the
 // slot reliably in the host TUI.
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
+import type { AssistantMessage } from "@opencode-ai/sdk/v2";
 import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { combineCosts, type CostMode } from "./usage";
 
 const id = "opencode-session-tokens-sidebar";
 const SIDEBAR_ORDER = 150;
@@ -22,6 +24,8 @@ interface SessionInfo {
 
 interface AssistantMessageInfo {
   role: "assistant" | string;
+  modelID?: string;
+  providerID?: string;
   cost?: number;
   tokens?: {
     input?: number;
@@ -39,6 +43,7 @@ interface UsageState {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  costMode: CostMode;
   turns: number;
   error?: string;
 }
@@ -59,6 +64,7 @@ const EMPTY: UsageState = {
   cacheRead: 0,
   cacheWrite: 0,
   cost: 0,
+  costMode: "reported",
   turns: 0,
 };
 
@@ -165,6 +171,7 @@ const tui: TuiPlugin = async (api) => {
         knownSessionIds = subtree;
 
         const totals: UsageState = { ...EMPTY, status: "ready" };
+        const assistantMessages: AssistantMessage[] = [];
         for (const sid of subtree) {
           const msgRes = await api.client.session.messages({
             sessionID: sid,
@@ -174,7 +181,10 @@ const tui: TuiPlugin = async (api) => {
           const messages: AssistantMessageInfo[] = [];
           for (const entry of msgRes.data || []) {
             const info = entry?.info as AssistantMessageInfo | undefined;
-            if (info && info.role === "assistant") messages.push(info);
+            if (info && info.role === "assistant") {
+              messages.push(info);
+              assistantMessages.push(info as AssistantMessage);
+            }
           }
 
           const sessionTotals = aggregate(messages);
@@ -188,6 +198,21 @@ const tui: TuiPlugin = async (api) => {
           // Session totals include costs even when message payloads do not.
           const session = sessions.find((entry) => entry.id === sid);
           totals.cost += session?.cost ?? sessionTotals.cost;
+        }
+
+        if (assistantMessages.some((message) => message.cost === 0)) {
+          try {
+            const providersRes = await api.client.provider.list({ directory: dir });
+            const combined = combineCosts(
+              totals.cost,
+              assistantMessages,
+              providersRes.data?.all ?? [],
+            );
+            totals.cost = combined.cost;
+            totals.costMode = combined.mode;
+          } catch {
+            // Pricing is optional; token totals should still be displayed.
+          }
         }
 
         if (disposed || myLoadId !== loadId) return;
@@ -368,7 +393,13 @@ const tui: TuiPlugin = async (api) => {
                 </box>
                 <Show when={state().cost > 0}>
                   <box flexDirection="row" justifyContent="space-between">
-                    <text fg={api.theme.current.textMuted}>$ cost</text>
+                    <text fg={api.theme.current.textMuted}>
+                      {state().costMode === "estimated"
+                        ? "$ est. cost"
+                        : state().costMode === "mixed"
+                          ? "$ cost incl. est."
+                          : "$ cost"}
+                    </text>
                     <text fg={costColor(state().cost, api)}>
                       {fmtCost(state().cost)}
                     </text>

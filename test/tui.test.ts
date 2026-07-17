@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { AssistantMessage, OpencodeClient, Session } from "@opencode-ai/sdk/v2";
+import type {
+  AssistantMessage,
+  Model,
+  OpencodeClient,
+  Provider,
+  Session,
+} from "@opencode-ai/sdk/v2";
 import {
+  combineCosts,
   computeTotals,
+  estimateCost,
   fetchDescendants,
   sumSessions,
 } from "../usage";
@@ -47,6 +55,29 @@ function session(id: string): Session {
   };
 }
 
+function provider(id: string, model: Model): Provider {
+  return {
+    id,
+    name: id,
+    source: "api",
+    env: [],
+    options: {},
+    models: { [model.id]: model },
+  };
+}
+
+function pricedModel(
+  id: string,
+  providerID: string,
+  cost: Model["cost"],
+): Model {
+  return {
+    id,
+    providerID,
+    cost,
+  } as Model;
+}
+
 function clientFor(
   children: Record<string, Session[]>,
   messages: Record<string, AssistantMessage[]>,
@@ -70,6 +101,98 @@ describe("token aggregation", () => {
 
     expect(root).toMatchObject({ input: 100, output: 20, turns: 1, cost: 0.5 });
     expect(descendants).toMatchObject({ input: 50, output: 10, turns: 2, cost: 1 });
+  });
+});
+
+describe("cost estimation", () => {
+  test("uses the same token categories and per-million rates as OpenCode", () => {
+    const message = assistant("priced");
+    message.cost = 0;
+    message.modelID = "claude-opus-4-6";
+    message.providerID = "anthropic";
+    const model = pricedModel(message.modelID, message.providerID, {
+      input: 3,
+      output: 15,
+      cache: { read: 0.3, write: 3.75 },
+    });
+
+    expect(estimateCost([message], [provider("anthropic", model)])).toBeCloseTo(
+      0.0006855,
+    );
+  });
+
+  test("finds API pricing across providers for quota-backed model aliases", () => {
+    const message = assistant("quota");
+    message.cost = 0;
+    message.modelID = "claude-opus-4.6";
+    message.providerID = "github-copilot";
+    const quotaModel = pricedModel(message.modelID, message.providerID, {
+      input: 0,
+      output: 0,
+      cache: { read: 0, write: 0 },
+    });
+    const apiModel = pricedModel("claude-opus-4-6", "anthropic", {
+      input: 3,
+      output: 15,
+      cache: { read: 0.3, write: 3.75 },
+    });
+
+    expect(
+      estimateCost(
+        [message],
+        [
+          provider("github-copilot", quotaModel),
+          provider("anthropic", apiModel),
+        ],
+      ),
+    ).toBeGreaterThan(0);
+  });
+
+  test("combines reported and estimated costs into one mixed total", () => {
+    const reported = assistant("reported");
+    const quota = assistant("quota");
+    quota.cost = 0;
+    quota.modelID = "claude-opus-4-6";
+    quota.providerID = "anthropic";
+    const model = pricedModel(quota.modelID, quota.providerID, {
+      input: 3,
+      output: 15,
+      cache: { read: 0.3, write: 3.75 },
+    });
+
+    expect(
+      combineCosts(reported.cost, [reported, quota], [provider("anthropic", model)]),
+    ).toEqual({ cost: 0.5006855, mode: "mixed" });
+  });
+
+  test("marks a fully estimated total", () => {
+    const quota = assistant("quota");
+    quota.cost = 0;
+    const model = pricedModel(quota.modelID, quota.providerID, {
+      input: 3,
+      output: 15,
+      cache: { read: 0.3, write: 3.75 },
+    });
+
+    expect(combineCosts(0, [quota], [provider("provider", model)])).toEqual({
+      cost: 0.0006855,
+      mode: "estimated",
+    });
+  });
+
+  test("does not estimate messages with an omitted cost", () => {
+    const message = assistant("missing");
+    delete (message as { cost?: number }).cost;
+    const model = pricedModel(message.modelID, message.providerID, {
+      input: 3,
+      output: 15,
+      cache: { read: 0.3, write: 3.75 },
+    });
+
+    expect(combineCosts(0.25, [message], [provider("provider", model)])).toEqual({
+      cost: 0.25,
+      mode: "reported",
+    });
   });
 });
 

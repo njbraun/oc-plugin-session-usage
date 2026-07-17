@@ -1,7 +1,9 @@
 import type {
   AssistantMessage,
   Message,
+  Model,
   OpencodeClient,
+  Provider,
   Session,
 } from "@opencode-ai/sdk/v2";
 
@@ -20,6 +22,13 @@ export type DescendantData = {
   turns: number;
 };
 
+export type CostMode = "reported" | "estimated" | "mixed";
+
+type CostMessage = Pick<
+  AssistantMessage,
+  "providerID" | "modelID" | "tokens"
+> & { cost?: number };
+
 export const EMPTY: TokenTotals = {
   input: 0,
   output: 0,
@@ -32,6 +41,104 @@ export const EMPTY: TokenTotals = {
 
 export const EMPTY_DESCENDANTS: DescendantData = { sessions: [], turns: 0 };
 const FETCH_CONCURRENCY = 4;
+
+function hasPrice(model: Model): boolean {
+  const cost = model.cost;
+  return (
+    cost.input > 0 ||
+    cost.output > 0 ||
+    cost.cache.read > 0 ||
+    cost.cache.write > 0 ||
+    Boolean(cost.tiers?.some((tier) =>
+      tier.input > 0 ||
+      tier.output > 0 ||
+      tier.cache.read > 0 ||
+      tier.cache.write > 0
+    )) ||
+    Boolean(
+      cost.experimentalOver200K &&
+      (cost.experimentalOver200K.input > 0 ||
+        cost.experimentalOver200K.output > 0 ||
+        cost.experimentalOver200K.cache.read > 0 ||
+        cost.experimentalOver200K.cache.write > 0),
+    )
+  );
+}
+
+function normalizedModelID(id: string): string {
+  return (id.split("/").pop() || id).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pricingFor(
+  providers: ReadonlyArray<Provider>,
+  providerID: string,
+  modelID: string,
+): Model | undefined {
+  const provider = providers.find((entry) => entry.id === providerID);
+  const exact = provider?.models[modelID] ??
+    Object.values(provider?.models ?? {}).find((model) => model.id === modelID);
+  if (exact && hasPrice(exact)) return exact;
+
+  const normalized = normalizedModelID(modelID);
+  return providers
+    .flatMap((entry) => Object.values(entry.models))
+    .find(
+      (model) =>
+        hasPrice(model) &&
+        (model.id === modelID || normalizedModelID(model.id) === normalized),
+    );
+}
+
+export function estimateCost(
+  messages: ReadonlyArray<CostMessage>,
+  providers: ReadonlyArray<Provider>,
+): number {
+  let total = 0;
+  for (const message of messages) {
+    const model = pricingFor(providers, message.providerID, message.modelID);
+    if (!model) continue;
+
+    const tokens = message.tokens;
+    const contextTokens = tokens.input + tokens.cache.read + tokens.cache.write;
+    const cost =
+      model.cost.tiers
+        ?.filter(
+          (entry) => entry.tier.type === "context" && contextTokens > entry.tier.size,
+        )
+        .sort((a, b) => b.tier.size - a.tier.size)[0] ??
+      (model.cost.experimentalOver200K && contextTokens > 200_000
+        ? model.cost.experimentalOver200K
+        : model.cost);
+
+    total +=
+      (tokens.input * cost.input +
+        (tokens.output + tokens.reasoning) * cost.output +
+        tokens.cache.read * cost.cache.read +
+        tokens.cache.write * cost.cache.write) /
+      1_000_000;
+  }
+  return total;
+}
+
+export function combineCosts(
+  reportedCost: number,
+  messages: ReadonlyArray<CostMessage>,
+  providers: ReadonlyArray<Provider>,
+): { cost: number; mode: CostMode } {
+  const estimatedCost = estimateCost(
+    messages.filter((message) => message.cost === 0),
+    providers,
+  );
+  return {
+    cost: reportedCost + estimatedCost,
+    mode:
+      estimatedCost > 0
+        ? reportedCost > 0
+          ? "mixed"
+          : "estimated"
+        : "reported",
+  };
+}
 
 export function isAssistant(m: Message): m is AssistantMessage {
   return m.role === "assistant";
