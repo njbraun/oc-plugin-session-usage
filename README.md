@@ -1,5 +1,7 @@
 # OpenCode Session Token Summary
 
+[![npm version](https://img.shields.io/npm/v/opencode-plugin-session-token-summary)](https://www.npmjs.com/package/opencode-plugin-session-token-summary)
+
 An OpenCode TUI plugin that adds a compact session-usage panel to the sidebar.
 It aggregates the root session and all nested subagent sessions.
 
